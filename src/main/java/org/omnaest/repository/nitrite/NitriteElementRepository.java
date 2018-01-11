@@ -5,6 +5,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
 
@@ -126,7 +127,7 @@ public class NitriteElementRepository<D> implements IndexElementRepository<D>
         });
     }
 
-    public NitriteElementRepository<D> withCredentials(String username, String password)
+    public IndexElementRepository<D> withCredentials(String username, String password)
     {
         this.username = username;
         this.password = password;
@@ -216,7 +217,11 @@ public class NitriteElementRepository<D> implements IndexElementRepository<D>
                                                            .get();
                                   repository.insert(Element.of(id, element));
                                   return id;
-                              }));
+                              })
+                                                                                    .boxed()
+                                                                                    .collect(Collectors.toList())
+                                                                                    .stream()
+                                                                                    .mapToLong(v -> v));
     }
 
     @Override
@@ -268,7 +273,8 @@ public class NitriteElementRepository<D> implements IndexElementRepository<D>
                           .mapToLong(element -> element.getId());
     }
 
-    public NitriteElementRepository<D> close()
+    @Override
+    public IndexElementRepository<D> close()
     {
         this.repository.get()
                        .closeDatabase();
