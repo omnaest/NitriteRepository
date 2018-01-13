@@ -1,6 +1,8 @@
 package org.omnaest.repository.nitrite;
 
 import java.io.File;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -9,6 +11,7 @@ import java.util.stream.Collectors;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
 
+import org.apache.commons.io.FileUtils;
 import org.dizitart.no2.Document;
 import org.dizitart.no2.Nitrite;
 import org.dizitart.no2.NitriteBuilder;
@@ -18,10 +21,15 @@ import org.dizitart.no2.objects.Cursor;
 import org.dizitart.no2.objects.Id;
 import org.dizitart.no2.objects.ObjectRepository;
 import org.dizitart.no2.objects.filters.ObjectFilters;
+import org.omnaest.utils.ExceptionUtils;
 import org.omnaest.utils.ObjectUtils;
 import org.omnaest.utils.StreamUtils;
+import org.omnaest.utils.ThreadUtils;
 import org.omnaest.utils.element.cached.CachedElement;
+import org.omnaest.utils.lock.SynchronizedAtLeastOneTimeExecutor;
 import org.omnaest.utils.repository.IndexElementRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * {@link IndexElementRepository} based on the {@link Nitrite} database
@@ -31,30 +39,96 @@ import org.omnaest.utils.repository.IndexElementRepository;
  */
 public class NitriteElementRepository<D> implements IndexElementRepository<D>
 {
+    private static final Logger LOG = LoggerFactory.getLogger(NitriteElementRepository.class);
+
     private CachedElement<DatabaseAndRepository<D>> repository = CachedElement.of(() -> this.createDatabase());
     private Class<D>                                type;
     private File                                    file;
     private String                                  username;
     private String                                  password;
     private Supplier<Supplier<Long>>                idSupplier;
+    private CommitExecutor<D>                       commitExecutor;
+
+    private static class CommitExecutor<D>
+    {
+        private AutoCommitMode                     autoCommitMode = AutoCommitMode.COMMIT_AFTER_EACH_WRITE_OPERATION;
+        private Supplier<DatabaseAndRepository<D>> repository;
+        private SynchronizedAtLeastOneTimeExecutor                onlyOneTimeExecutor;
+
+        public CommitExecutor(Supplier<DatabaseAndRepository<D>> repository)
+        {
+            super();
+            this.repository = repository;
+
+            int numberOfThreads = 10 * Runtime.getRuntime()
+                                              .availableProcessors();
+            this.onlyOneTimeExecutor = new SynchronizedAtLeastOneTimeExecutor(Executors.newFixedThreadPool(numberOfThreads), () ->
+            {
+                ThreadUtils.sleepSilently(1, TimeUnit.SECONDS);
+                LOG.info("Autocommit...");
+                this.repository.get()
+                               .getDatabase()
+                               .commit();
+                LOG.info("...done");
+            });
+        }
+
+        public void commit()
+        {
+            if (AutoCommitMode.COMMIT_AFTER_EACH_WRITE_OPERATION.equals(this.autoCommitMode))
+            {
+                this.repository.get()
+                               .getDatabase()
+                               .commit();
+            }
+            else if (AutoCommitMode.COMMIT_AFTER_1_SECOND.equals(this.autoCommitMode))
+            {
+                this.onlyOneTimeExecutor.fire();
+            }
+        }
+
+        public void setAutoCommitMode(AutoCommitMode autoCommitMode)
+        {
+            this.autoCommitMode = autoCommitMode;
+        }
+
+        public void close()
+        {
+            this.onlyOneTimeExecutor.shutdown()
+                                    .awaitTermination(1, TimeUnit.MINUTES);
+        }
+
+    }
 
     private static class DatabaseAndRepository<D>
     {
         private Supplier<ObjectRepository<Element>> repository;
         private Nitrite                             database;
+        private CommitExecutor<D>                   commitExecutor;
 
-        public DatabaseAndRepository(Supplier<ObjectRepository<Element>> repository, Nitrite database)
+        public DatabaseAndRepository(Supplier<ObjectRepository<Element>> repository, Nitrite database, CommitExecutor<D> commitExecutor)
         {
             super();
             this.repository = repository;
             this.database = database;
+            this.commitExecutor = commitExecutor;
+        }
+
+        public Nitrite getDatabase()
+        {
+            return this.database;
         }
 
         public <R> R executeWriteOnRepositoryAndGet(Function<ObjectRepository<Element>, R> operation)
         {
             R retval = operation.apply(this.repository.get());
-            this.database.commit();
+            this.executeCommitByAutoCommitMode();
             return retval;
+        }
+
+        private void executeCommitByAutoCommitMode()
+        {
+            this.commitExecutor.commit();
         }
 
         public <R> R executeReadOnRepositoryAndGet(Function<ObjectRepository<Element>, R> operation)
@@ -66,7 +140,7 @@ public class NitriteElementRepository<D> implements IndexElementRepository<D>
         public void executeWriteOnRepository(Consumer<ObjectRepository<Element>> operation)
         {
             operation.accept(this.repository.get());
-            this.database.commit();
+            this.executeCommitByAutoCommitMode();
         }
 
         public void closeDatabase()
@@ -125,6 +199,8 @@ public class NitriteElementRepository<D> implements IndexElementRepository<D>
                                                .orElse(0));
             return () -> id.getAndIncrement();
         });
+
+        this.commitExecutor = new CommitExecutor<>(this.repository);
     }
 
     public IndexElementRepository<D> withCredentials(String username, String password)
@@ -134,15 +210,33 @@ public class NitriteElementRepository<D> implements IndexElementRepository<D>
         return this;
     }
 
+    public enum AutoCommitMode
+    {
+        COMMIT_AFTER_EACH_WRITE_OPERATION, COMMIT_AFTER_1_SECOND, AUTOCOMMIT_DISABLED
+    }
+
+    /**
+     * Sets the {@link AutoCommitMode}, default is {@link AutoCommitMode#COMMIT_AFTER_EACH_WRITE_OPERATION}
+     * 
+     * @param autoCommitMode
+     * @return
+     */
+    public NitriteElementRepository<D> usingAutoCommit(AutoCommitMode autoCommitMode)
+    {
+        this.commitExecutor.setAutoCommitMode(autoCommitMode);
+        return this;
+    }
+
     private DatabaseAndRepository<D> createDatabase()
     {
+        ExceptionUtils.executeSilentVoid(() -> FileUtils.forceMkdirParent(this.file));
         NitriteBuilder builder = Nitrite.builder()
                                         .compressed()
                                         .nitriteMapper(this.createMapper(this.type))
                                         .filePath(this.file);
         Nitrite db = this.username != null ? builder.openOrCreate(this.username, this.password) : builder.openOrCreate();
 
-        return new DatabaseAndRepository<D>(() -> db.getRepository(Element.class), db);
+        return new DatabaseAndRepository<D>(() -> db.getRepository(Element.class), db, this.commitExecutor);
     }
 
     private NitriteMapper createMapper(Class<D> elementType)
@@ -274,10 +368,10 @@ public class NitriteElementRepository<D> implements IndexElementRepository<D>
     }
 
     @Override
-    public IndexElementRepository<D> close()
+    public void close()
     {
+        this.commitExecutor.close();
         this.repository.get()
                        .closeDatabase();
-        return this;
     }
 }

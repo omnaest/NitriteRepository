@@ -5,6 +5,7 @@ import static org.junit.Assert.assertEquals;
 import java.util.stream.Collectors;
 
 import org.junit.Test;
+import org.omnaest.repository.nitrite.NitriteElementRepository.AutoCommitMode;
 import org.omnaest.utils.FileUtils;
 import org.omnaest.utils.repository.IndexElementRepository;
 
@@ -47,7 +48,9 @@ public class NitriteElementRepositoryTest
     @Test
     public void testAddAndGet() throws Exception
     {
-        IndexElementRepository<Domain> repository = new NitriteElementRepository<>(Domain.class, FileUtils.createRandomTempFile()).clear();
+        IndexElementRepository<Domain> repository = new NitriteElementRepository<>(Domain.class,
+                                                                                   FileUtils.createRandomTempFile()).usingAutoCommit(AutoCommitMode.COMMIT_AFTER_EACH_WRITE_OPERATION)
+                                                                                                                    .clear();
 
         assertEquals("value1", repository.get(repository.add(new Domain().setField("value1")))
                                          .getField());
