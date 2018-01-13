@@ -53,7 +53,7 @@ public class NitriteElementRepository<D> implements IndexElementRepository<D>
     {
         private AutoCommitMode                     autoCommitMode = AutoCommitMode.COMMIT_AFTER_EACH_WRITE_OPERATION;
         private Supplier<DatabaseAndRepository<D>> repository;
-        private SynchronizedAtLeastOneTimeExecutor                onlyOneTimeExecutor;
+        private SynchronizedAtLeastOneTimeExecutor onlyOneTimeExecutor;
 
         public CommitExecutor(Supplier<DatabaseAndRepository<D>> repository)
         {
@@ -66,9 +66,7 @@ public class NitriteElementRepository<D> implements IndexElementRepository<D>
             {
                 ThreadUtils.sleepSilently(1, TimeUnit.SECONDS);
                 LOG.info("Autocommit...");
-                this.repository.get()
-                               .getDatabase()
-                               .commit();
+                this.commitImmediate();
                 LOG.info("...done");
             });
         }
@@ -77,9 +75,7 @@ public class NitriteElementRepository<D> implements IndexElementRepository<D>
         {
             if (AutoCommitMode.COMMIT_AFTER_EACH_WRITE_OPERATION.equals(this.autoCommitMode))
             {
-                this.repository.get()
-                               .getDatabase()
-                               .commit();
+                this.commitImmediate();
             }
             else if (AutoCommitMode.COMMIT_AFTER_1_SECOND.equals(this.autoCommitMode))
             {
@@ -96,6 +92,13 @@ public class NitriteElementRepository<D> implements IndexElementRepository<D>
         {
             this.onlyOneTimeExecutor.shutdown()
                                     .awaitTermination(1, TimeUnit.MINUTES);
+        }
+
+        public void commitImmediate()
+        {
+            this.repository.get()
+                           .getDatabase()
+                           .commit();
         }
 
     }
@@ -147,6 +150,7 @@ public class NitriteElementRepository<D> implements IndexElementRepository<D>
         {
             this.database.close();
         }
+
     }
 
     private static class Element
@@ -255,7 +259,17 @@ public class NitriteElementRepository<D> implements IndexElementRepository<D>
             @Override
             public <T> T asObject(Document document, Class<T> type)
             {
-                Object object = this.nitriteMapper.asObject((Document) document.get("element"), (Class<Object>) elementType);
+                Object rawElement = document.get("element");
+                Object object;
+                if (rawElement instanceof Document)
+                {
+                    object = this.nitriteMapper.asObject((Document) rawElement, (Class<Object>) elementType);
+                }
+                else
+                {
+                    object = rawElement;
+                }
+
                 long id = (Long) document.get("id");
                 T element = (T) Element.of(id, object);
                 return element;
@@ -291,78 +305,87 @@ public class NitriteElementRepository<D> implements IndexElementRepository<D>
     @Override
     public Long add(D element)
     {
-        return this.repository.get()
-                              .executeWriteOnRepositoryAndGet(repository ->
-                              {
-                                  long id = this.idSupplier.get()
-                                                           .get();
-                                  repository.insert(Element.of(id, element));
-                                  return id;
-                              });
+        return this.getRepository()
+                   .executeWriteOnRepositoryAndGet(repository ->
+                   {
+                       long id = this.idSupplier.get()
+                                                .get();
+                       repository.insert(Element.of(id, element));
+                       return id;
+                   });
     }
 
     @Override
     public LongStream add(Stream<D> elements)
     {
-        return this.repository.get()
-                              .executeWriteOnRepositoryAndGet(repository -> elements.mapToLong(element ->
-                              {
-                                  long id = this.idSupplier.get()
-                                                           .get();
-                                  repository.insert(Element.of(id, element));
-                                  return id;
-                              })
-                                                                                    .boxed()
-                                                                                    .collect(Collectors.toList())
-                                                                                    .stream()
-                                                                                    .mapToLong(v -> v));
+        return this.getRepository()
+                   .executeWriteOnRepositoryAndGet(repository -> elements.mapToLong(element ->
+                   {
+                       long id = this.idSupplier.get()
+                                                .get();
+                       repository.insert(Element.of(id, element));
+                       return id;
+                   })
+                                                                         .boxed()
+                                                                         .collect(Collectors.toList())
+                                                                         .stream()
+                                                                         .mapToLong(v -> v));
     }
 
     @Override
     public void update(Long id, D element)
     {
-        this.repository.get()
-                       .executeWriteOnRepository(repository -> repository.update(Element.of(id, element)));
+        this.getRepository()
+            .executeWriteOnRepository(repository -> repository.update(Element.of(id, element)));
 
     }
 
     @Override
     public void delete(Long id)
     {
-        this.repository.get()
-                       .executeWriteOnRepository(repository -> repository.remove(Element.of(id, this.get(id))));
+        this.getRepository()
+            .executeWriteOnRepository(repository -> repository.remove(Element.of(id, this.get(id))));
 
     }
 
     @Override
     public D get(Long id)
     {
-        return this.repository.get()
-                              .executeReadOnRepositoryAndGet(repository -> ObjectUtils.getIfNotNull(repository.find(ObjectFilters.eq("id", id))
-                                                                                                              .firstOrDefault(),
-                                                                                                    element -> element.getElement()));
+        return this.getRepository()
+                   .executeReadOnRepositoryAndGet(repository ->
+                   {
+                       Element element = repository.find(ObjectFilters.eq("id", id))
+                                                   .firstOrDefault();
+                       return ObjectUtils.getIfNotNull(element, e -> e.getElement());
+                   });
     }
 
     @Override
     public long size()
     {
-        return this.repository.get()
-                              .executeReadOnRepositoryAndGet(repository -> repository.size());
+        return this.getRepository()
+                   .executeReadOnRepositoryAndGet(repository -> repository.size());
     }
 
     @Override
     public IndexElementRepository<D> clear()
     {
-        this.repository.get()
-                       .executeWriteOnRepository(repository -> repository.drop());
+        this.getRepository()
+            .executeWriteOnRepository(repository -> repository.drop());
+        this.commitExecutor.commitImmediate();
         return this;
+    }
+
+    private DatabaseAndRepository<D> getRepository()
+    {
+        return this.repository.get();
     }
 
     @Override
     public LongStream ids()
     {
-        Cursor<Element> cursor = this.repository.get()
-                                                .executeReadOnRepositoryAndGet(repository -> repository.find());
+        Cursor<Element> cursor = this.getRepository()
+                                     .executeReadOnRepositoryAndGet(repository -> repository.find());
         return StreamUtils.fromIterator(cursor.iterator())
                           .mapToLong(element -> element.getId());
     }
@@ -371,7 +394,14 @@ public class NitriteElementRepository<D> implements IndexElementRepository<D>
     public void close()
     {
         this.commitExecutor.close();
-        this.repository.get()
-                       .closeDatabase();
+        this.getRepository()
+            .closeDatabase();
     }
+
+    @Override
+    public String toString()
+    {
+        return "NitriteElementRepository [" + this.file + "]";
+    }
+
 }
