@@ -22,6 +22,7 @@ import org.dizitart.no2.objects.Id;
 import org.dizitart.no2.objects.ObjectRepository;
 import org.dizitart.no2.objects.filters.ObjectFilters;
 import org.omnaest.utils.ExceptionUtils;
+import org.omnaest.utils.MapperUtils;
 import org.omnaest.utils.ObjectUtils;
 import org.omnaest.utils.StreamUtils;
 import org.omnaest.utils.ThreadUtils;
@@ -199,6 +200,7 @@ public class NitriteElementRepository<D> implements IndexElementRepository<D>
         this.idSupplier = CachedElement.of((Supplier<Supplier<Long>>) () ->
         {
             AtomicLong id = new AtomicLong(this.ids()
+                                               .mapToLong(MapperUtils.identitiyForLongAsUnboxed())
                                                .max()
                                                .orElse(0));
             return () -> id.getAndIncrement();
@@ -382,20 +384,24 @@ public class NitriteElementRepository<D> implements IndexElementRepository<D>
     }
 
     @Override
-    public LongStream ids()
+    public Stream<Long> ids()
     {
         Cursor<Element> cursor = this.getRepository()
                                      .executeReadOnRepositoryAndGet(repository -> repository.find());
         return StreamUtils.fromIterator(cursor.iterator())
-                          .mapToLong(element -> element.getId());
+                          .map(element -> element.getId());
     }
 
     @Override
     public void close()
     {
+        LOG.info("Shutdown...");
+        LOG.info("  ...executor...");
         this.commitExecutor.close();
+        LOG.info("  ...repository...");
         this.getRepository()
             .closeDatabase();
+        LOG.info("...done");
     }
 
     @Override
