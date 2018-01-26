@@ -24,11 +24,13 @@ import org.dizitart.no2.objects.filters.ObjectFilters;
 import org.omnaest.utils.ExceptionUtils;
 import org.omnaest.utils.MapperUtils;
 import org.omnaest.utils.ObjectUtils;
+import org.omnaest.utils.ReflectionUtils;
 import org.omnaest.utils.StreamUtils;
 import org.omnaest.utils.ThreadUtils;
 import org.omnaest.utils.element.cached.CachedElement;
 import org.omnaest.utils.lock.SynchronizedAtLeastOneTimeExecutor;
 import org.omnaest.utils.repository.IndexElementRepository;
+import org.omnaest.utils.supplier.SupplierConsumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -47,7 +49,7 @@ public class NitriteElementRepository<D> implements IndexElementRepository<D>
     private File                                    file;
     private String                                  username;
     private String                                  password;
-    private Supplier<Supplier<Long>>                idSupplier;
+    private Supplier<SupplierConsumer<Long>>        idSupplier;
     private CommitExecutor<D>                       commitExecutor;
 
     private static class CommitExecutor<D>
@@ -66,9 +68,9 @@ public class NitriteElementRepository<D> implements IndexElementRepository<D>
             this.onlyOneTimeExecutor = new SynchronizedAtLeastOneTimeExecutor(Executors.newFixedThreadPool(numberOfThreads), () ->
             {
                 ThreadUtils.sleepSilently(1, TimeUnit.SECONDS);
-                LOG.info("Autocommit...");
+                LOG.debug("Autocommit...");
                 this.commitImmediate();
-                LOG.info("...done");
+                LOG.debug("...done");
             });
         }
 
@@ -92,7 +94,8 @@ public class NitriteElementRepository<D> implements IndexElementRepository<D>
         public void close()
         {
             this.onlyOneTimeExecutor.shutdown()
-                                    .awaitTermination(1, TimeUnit.MINUTES);
+                                    .awaitTermination(10, TimeUnit.MINUTES);
+            this.commitImmediate();
         }
 
         public void commitImmediate()
@@ -143,12 +146,15 @@ public class NitriteElementRepository<D> implements IndexElementRepository<D>
 
         public void executeWriteOnRepository(Consumer<ObjectRepository<Element>> operation)
         {
-            operation.accept(this.repository.get());
+            ObjectRepository<Element> objectRepository = this.repository.get();
+            operation.accept(objectRepository);
+            //            objectRepository.close();
             this.executeCommitByAutoCommitMode();
         }
 
         public void closeDatabase()
         {
+            this.database.commit();
             this.database.close();
         }
 
@@ -197,13 +203,26 @@ public class NitriteElementRepository<D> implements IndexElementRepository<D>
         this.type = type;
         this.file = file;
 
-        this.idSupplier = CachedElement.of((Supplier<Supplier<Long>>) () ->
+        this.idSupplier = CachedElement.of((Supplier<SupplierConsumer<Long>>) () ->
         {
             AtomicLong id = new AtomicLong(this.ids()
                                                .mapToLong(MapperUtils.identitiyForLongAsUnboxed())
                                                .max()
-                                               .orElse(0));
-            return () -> id.getAndIncrement();
+                                               .orElse(-1));
+            return new SupplierConsumer<Long>()
+            {
+                @Override
+                public Long get()
+                {
+                    return id.incrementAndGet();
+                }
+
+                @Override
+                public void accept(Long value)
+                {
+                    id.updateAndGet(v -> Math.max(v, value));
+                }
+            };
         });
 
         this.commitExecutor = new CommitExecutor<>(this.repository);
@@ -262,14 +281,25 @@ public class NitriteElementRepository<D> implements IndexElementRepository<D>
             public <T> T asObject(Document document, Class<T> type)
             {
                 Object rawElement = document.get("element");
-                Object object;
+                Object object = null;
                 if (rawElement instanceof Document)
                 {
                     object = this.nitriteMapper.asObject((Document) rawElement, (Class<Object>) elementType);
                 }
-                else
+                else if (rawElement == null || type.isAssignableFrom(rawElement.getClass()))
                 {
                     object = rawElement;
+                }
+                else
+                {
+                    try
+                    {
+                        object = ReflectionUtils.newInstance(elementType, rawElement);
+                    }
+                    catch (Exception e)
+                    {
+                        throw new IllegalStateException(e);
+                    }
                 }
 
                 long id = (Long) document.get("id");
@@ -337,8 +367,10 @@ public class NitriteElementRepository<D> implements IndexElementRepository<D>
     @Override
     public void update(Long id, D element)
     {
+        this.idSupplier.get()
+                       .accept(id);
         this.getRepository()
-            .executeWriteOnRepository(repository -> repository.update(Element.of(id, element)));
+            .executeWriteOnRepository(repository -> repository.update(Element.of(id, element), true));
 
     }
 
@@ -395,13 +427,13 @@ public class NitriteElementRepository<D> implements IndexElementRepository<D>
     @Override
     public void close()
     {
-        LOG.info("Shutdown...");
-        LOG.info("  ...executor...");
+        LOG.debug("Shutdown...");
+        LOG.debug("  ...executor...");
         this.commitExecutor.close();
-        LOG.info("  ...repository...");
+        LOG.debug("  ...repository...");
         this.getRepository()
             .closeDatabase();
-        LOG.info("...done");
+        LOG.debug("...done");
     }
 
     @Override
