@@ -14,10 +14,10 @@ import org.omnaest.utils.FileUtils;
 import org.omnaest.utils.repository.IndexElementRepository;
 
 /**
- * @see NitriteElementRepository
+ * @see NitriteIndexElementRepository
  * @author omnaest
  */
-public class NitriteElementRepositoryTest
+public class NitriteIndexElementRepositoryTest
 {
     @SuppressWarnings("unused")
     private static class Domain
@@ -52,7 +52,7 @@ public class NitriteElementRepositoryTest
     @Test
     public void testAddAndGet() throws Exception
     {
-        try (NitriteElementRepository<Domain> repositoryRoot = new NitriteElementRepository<>(Domain.class, FileUtils.createRandomTempFile());
+        try (NitriteIndexElementRepository<Domain> repositoryRoot = new NitriteIndexElementRepository<>(Domain.class, FileUtils.createRandomTempFile());
                 IndexElementRepository<Domain> repository = repositoryRoot.usingAutoCommit(AutoCommitMode.COMMIT_AFTER_EACH_WRITE_OPERATION)
                                                                           .clear())
         {
@@ -67,8 +67,8 @@ public class NitriteElementRepositoryTest
                                              .getField());
 
             assertEquals("value4value5", repository.add(new Domain().setField("value4"), new Domain().setField("value5"))
-                                                   .mapToObj(id -> repository.get(id)
-                                                                             .getField())
+                                                   .map(id -> repository.get(id)
+                                                                        .getField())
                                                    .collect(Collectors.joining()));
         }
 
@@ -98,7 +98,7 @@ public class NitriteElementRepositoryTest
     @Test
     public void testUpdateWithId() throws IOException
     {
-        try (NitriteElementRepository<SetDomain> repositoryRoot = new NitriteElementRepository<>(SetDomain.class, FileUtils.createRandomTempFile());
+        try (NitriteIndexElementRepository<SetDomain> repositoryRoot = new NitriteIndexElementRepository<>(SetDomain.class, FileUtils.createRandomTempFile());
                 IndexElementRepository<SetDomain> repository = repositoryRoot.usingAutoCommit(AutoCommitMode.COMMIT_AFTER_EACH_WRITE_OPERATION)
                                                                              .clear())
         {
