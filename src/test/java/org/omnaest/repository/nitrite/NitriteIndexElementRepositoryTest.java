@@ -102,7 +102,7 @@ public class NitriteIndexElementRepositoryTest
                 IndexElementRepository<SetDomain> repository = repositoryRoot.usingAutoCommit(AutoCommitMode.COMMIT_AFTER_EACH_WRITE_OPERATION)
                                                                              .clear())
         {
-            repository.update(100l, new SetDomain("123"));
+            repository.put(100l, new SetDomain("123"));
             SetDomain value = repository.get(100l);
             assertEquals("123", value.iterator()
                                      .next());

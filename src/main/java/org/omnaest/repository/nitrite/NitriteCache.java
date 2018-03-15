@@ -5,6 +5,7 @@ import java.util.Set;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
+import org.omnaest.utils.JSONHelper;
 import org.omnaest.utils.cache.AbstractCache;
 import org.omnaest.utils.cache.Cache;
 import org.omnaest.utils.supplier.SupplierConsumer;
@@ -63,12 +64,11 @@ public class NitriteCache extends AbstractCache implements Cache
         this.repository = new NitriteElementRepository<String, ElementAndType>(ElementAndType.class, file, idSupplier);
     }
 
-    @SuppressWarnings("unchecked")
     @Override
     public <V> V get(String key, Class<V> type)
     {
-        return (V) this.repository.get(key)
-                                  .getValue();
+        ElementAndType elementAndType = this.repository.get(key);
+        return elementAndType != null ? JSONHelper.toObjectWithType(elementAndType.getValue(), type) : null;
     }
 
     @SuppressWarnings("unchecked")
@@ -82,21 +82,14 @@ public class NitriteCache extends AbstractCache implements Cache
     @Override
     public void put(String key, Object value)
     {
-        this.repository.update(key, new ElementAndType(value, value != null ? value.getClass() : null));
+        this.repository.put(key, new ElementAndType(value, value != null ? value.getClass() : null));
     }
 
-    @SuppressWarnings("unchecked")
     @Override
     public <V> V computeIfAbsent(String key, Supplier<V> supplier, Class<V> type)
     {
-        V retval = null;
-
-        ElementAndType entry = this.repository.get(key);
-        if (entry != null)
-        {
-            retval = (V) entry.getValue();
-        }
-        else
+        V retval = this.get(key, type);
+        if (retval == null)
         {
             retval = supplier.get();
             this.put(key, retval);
@@ -108,7 +101,7 @@ public class NitriteCache extends AbstractCache implements Cache
     @Override
     public void remove(String key)
     {
-        this.repository.delete(key);
+        this.repository.remove(key);
     }
 
     @Override

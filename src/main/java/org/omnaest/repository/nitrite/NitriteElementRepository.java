@@ -43,7 +43,7 @@ public class NitriteElementRepository<I extends Comparable<I>, D> implements Ele
     private static final Logger LOG = LoggerFactory.getLogger(NitriteElementRepository.class);
 
     private CachedElement<DatabaseAndRepository<D>> repository = CachedElement.of(() -> this.createDatabase());
-    private Class<D>                                type;
+    private Class<D>                                dataType;
     private File                                    file;
     private String                                  username;
     private String                                  password;
@@ -198,8 +198,26 @@ public class NitriteElementRepository<I extends Comparable<I>, D> implements Ele
     public NitriteElementRepository(Class<D> type, File file, Supplier<SupplierConsumer<I>> idSupplier)
     {
         super();
-        this.type = type;
+        this.dataType = type;
         this.file = file;
+
+        if (idSupplier == null)
+        {
+            idSupplier = () -> new SupplierConsumer<I>()
+            {
+                @Override
+                public I get()
+                {
+                    throw new UnsupportedOperationException("No idSupplier has been specified");
+                }
+
+                @Override
+                public void accept(I t)
+                {
+                    //do nothing
+                }
+            };
+        }
 
         this.idSupplier = CachedElement.of(idSupplier);
 
@@ -235,7 +253,7 @@ public class NitriteElementRepository<I extends Comparable<I>, D> implements Ele
         ExceptionUtils.executeSilentVoid(() -> FileUtils.forceMkdirParent(this.file));
         NitriteBuilder builder = Nitrite.builder()
                                         .compressed()
-                                        .nitriteMapper(this.createMapper(this.type))
+                                        .nitriteMapper(this.createMapper(this.dataType))
                                         .filePath(this.file);
         Nitrite db = this.username != null ? builder.openOrCreate(this.username, this.password) : builder.openOrCreate();
 
@@ -341,7 +359,7 @@ public class NitriteElementRepository<I extends Comparable<I>, D> implements Ele
     }
 
     @Override
-    public void update(I id, D element)
+    public void put(I id, D element)
     {
         this.idSupplier.get()
                        .accept(id);
@@ -351,7 +369,7 @@ public class NitriteElementRepository<I extends Comparable<I>, D> implements Ele
     }
 
     @Override
-    public void delete(I id)
+    public void remove(I id)
     {
         this.getRepository()
             .executeWriteOnRepository(repository -> repository.remove(Element.of(id, this.get(id))));
