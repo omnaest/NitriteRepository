@@ -1,0 +1,39 @@
+package org.omnaest.repository.nitrite;
+
+import java.io.File;
+
+import org.omnaest.utils.CacheUtils;
+import org.omnaest.utils.cache.Cache;
+import org.omnaest.utils.supplier.SupplierConsumer;
+
+/**
+ * Helper to create {@link NitriteElementRepository} and {@link Cache} instances
+ * 
+ * @author omnaest
+ */
+public class NitriteRepositoryUtils
+{
+    private NitriteRepositoryUtils()
+    {
+    }
+
+    public static <I extends Comparable<I>, D> NitriteElementRepository<I, D> newElementRepository(Class<D> type, File file, SupplierConsumer<I> idSupplier)
+    {
+        return new NitriteElementRepository<>(type, file, () -> idSupplier);
+    }
+
+    public static <D> NitriteIndexElementRepository<D> newIndexElementRepository(Class<D> type, File file)
+    {
+        return new NitriteIndexElementRepository<>(type, file);
+    }
+
+    public static Cache newLocalCache(String name)
+    {
+        return newCache(new File(CacheUtils.DEFAULT_CACHE_FOLDER, name + ".dat"));
+    }
+
+    public static Cache newCache(File file)
+    {
+        return new NitriteCache(file);
+    }
+}

@@ -6,11 +6,10 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 import org.omnaest.utils.JSONHelper;
-import org.omnaest.utils.cache.AbstractCache;
-import org.omnaest.utils.cache.Cache;
+import org.omnaest.utils.cache.internal.AbstractCache;
 import org.omnaest.utils.supplier.SupplierConsumer;
 
-public class NitriteCache extends AbstractCache implements Cache
+public class NitriteCache extends AbstractCache
 {
     private NitriteElementRepository<String, ElementAndType> repository;
 
