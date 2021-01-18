@@ -15,17 +15,17 @@ import org.dizitart.no2.Nitrite;
 import org.dizitart.no2.NitriteBuilder;
 import org.dizitart.no2.mapper.JacksonMapper;
 import org.dizitart.no2.mapper.NitriteMapper;
-import org.dizitart.no2.objects.Cursor;
 import org.dizitart.no2.objects.Id;
 import org.dizitart.no2.objects.ObjectRepository;
 import org.dizitart.no2.objects.filters.ObjectFilters;
+import org.omnaest.utils.EnumUtils;
 import org.omnaest.utils.ExceptionUtils;
-import org.omnaest.utils.ObjectUtils;
 import org.omnaest.utils.ReflectionUtils;
 import org.omnaest.utils.StreamUtils;
 import org.omnaest.utils.ThreadUtils;
 import org.omnaest.utils.element.cached.CachedElement;
 import org.omnaest.utils.lock.SynchronizedAtLeastOneTimeExecutor;
+import org.omnaest.utils.optional.NullOptional;
 import org.omnaest.utils.repository.ElementRepository;
 import org.omnaest.utils.repository.IndexElementRepository;
 import org.omnaest.utils.supplier.SupplierConsumer;
@@ -344,7 +344,7 @@ public class NitriteElementRepository<I extends Comparable<I>, D> implements Ele
     }
 
     @Override
-    public Stream<I> add(Stream<D> elements)
+    public Stream<I> addAll(Stream<D> elements)
     {
         return this.getRepository()
                    .executeWriteOnRepositoryAndGet(repository -> elements.map(element ->
@@ -372,19 +372,19 @@ public class NitriteElementRepository<I extends Comparable<I>, D> implements Ele
     public void remove(I id)
     {
         this.getRepository()
-            .executeWriteOnRepository(repository -> repository.remove(Element.of(id, this.get(id))));
+            .executeWriteOnRepository(repository -> repository.remove(Element.of(id, this.getValue(id))));
 
     }
 
     @Override
-    public D get(I id)
+    public NullOptional<D> get(I id)
     {
         return this.getRepository()
                    .executeReadOnRepositoryAndGet(repository ->
                    {
-                       Element element = repository.find(ObjectFilters.eq("id", id))
-                                                   .firstOrDefault();
-                       return ObjectUtils.getIfNotNull(element, e -> e.getElement());
+                       return NullOptional.ofNullable(repository.find(ObjectFilters.eq("id", id))
+                                                                .firstOrDefault())
+                                          .mapToNullable(Element::getElement);
                    });
     }
 
@@ -411,12 +411,14 @@ public class NitriteElementRepository<I extends Comparable<I>, D> implements Ele
 
     @SuppressWarnings("unchecked")
     @Override
-    public Stream<I> ids()
+    public Stream<I> ids(IdOrder idOrder)
     {
-        Cursor<Element> cursor = this.getRepository()
-                                     .executeReadOnRepositoryAndGet(repository -> repository.find());
-        return StreamUtils.fromIterator(cursor.iterator())
-                          .map(element -> (I) element.getId());
+        return EnumUtils.decideOn(idOrder)
+                        .ifEqualTo(IdOrder.ARBITRARY, () -> StreamUtils.fromIterator(this.getRepository()
+                                                                                         .executeReadOnRepositoryAndGet(repository -> repository.find())
+                                                                                         .iterator())
+                                                                       .map(element -> (I) element.getId()))
+                        .orElseThrow(() -> new IllegalArgumentException("Unsupported IdOrder value: " + idOrder));
     }
 
     @Override

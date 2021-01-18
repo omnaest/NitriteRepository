@@ -57,17 +57,17 @@ public class NitriteIndexElementRepositoryTest
                                                                           .clear())
         {
 
-            assertEquals("value1", repository.get(repository.add(new Domain().setField("value1")))
+            assertEquals("value1", repository.getValue(repository.add(new Domain().setField("value1")))
                                              .getField());
 
-            assertEquals("value2", repository.get(repository.add(new Domain().setField("value2")))
+            assertEquals("value2", repository.getValue(repository.add(new Domain().setField("value2")))
                                              .getField());
 
-            assertEquals("value3", repository.get(repository.add(new Domain().setField("value3")))
+            assertEquals("value3", repository.getValue(repository.add(new Domain().setField("value3")))
                                              .getField());
 
-            assertEquals("value4value5", repository.add(new Domain().setField("value4"), new Domain().setField("value5"))
-                                                   .map(id -> repository.get(id)
+            assertEquals("value4value5", repository.addAll(new Domain().setField("value4"), new Domain().setField("value5"))
+                                                   .map(id -> repository.getValue(id)
                                                                         .getField())
                                                    .collect(Collectors.joining()));
         }
@@ -103,7 +103,7 @@ public class NitriteIndexElementRepositoryTest
                                                                              .clear())
         {
             repository.put(100l, new SetDomain("123"));
-            SetDomain value = repository.get(100l);
+            SetDomain value = repository.getValue(100l);
             assertEquals("123", value.iterator()
                                      .next());
         }

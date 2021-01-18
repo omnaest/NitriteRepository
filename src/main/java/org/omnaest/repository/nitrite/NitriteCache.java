@@ -66,7 +66,7 @@ public class NitriteCache extends AbstractCache
     @Override
     public <V> V get(String key, Class<V> type)
     {
-        ElementAndType elementAndType = this.repository.get(key);
+        ElementAndType elementAndType = this.repository.getValue(key);
         return elementAndType != null ? JSONHelper.toObjectWithType(elementAndType.getValue(), type) : null;
     }
 
@@ -74,7 +74,7 @@ public class NitriteCache extends AbstractCache
     @Override
     public <V> Class<V> getType(String key)
     {
-        return (Class<V>) this.repository.get(key)
+        return (Class<V>) this.repository.getValue(key)
                                          .getType();
     }
 
