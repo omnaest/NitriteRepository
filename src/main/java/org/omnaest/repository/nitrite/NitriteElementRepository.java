@@ -1,6 +1,12 @@
 package org.omnaest.repository.nitrite;
 
 import java.io.File;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
@@ -13,6 +19,7 @@ import org.apache.commons.io.FileUtils;
 import org.dizitart.no2.Document;
 import org.dizitart.no2.Nitrite;
 import org.dizitart.no2.NitriteBuilder;
+import org.dizitart.no2.exceptions.UniqueConstraintException;
 import org.dizitart.no2.mapper.JacksonMapper;
 import org.dizitart.no2.mapper.NitriteMapper;
 import org.dizitart.no2.objects.Id;
@@ -20,6 +27,7 @@ import org.dizitart.no2.objects.ObjectRepository;
 import org.dizitart.no2.objects.filters.ObjectFilters;
 import org.omnaest.utils.EnumUtils;
 import org.omnaest.utils.ExceptionUtils;
+import org.omnaest.utils.MapUtils;
 import org.omnaest.utils.ReflectionUtils;
 import org.omnaest.utils.StreamUtils;
 import org.omnaest.utils.ThreadUtils;
@@ -138,16 +146,20 @@ public class NitriteElementRepository<I extends Comparable<I>, D> implements Ele
 
         public <R> R executeReadOnRepositoryAndGet(Function<ObjectRepository<Element>, R> operation)
         {
-            R retval = operation.apply(this.repository.get());
-            return retval;
+            return operation.apply(this.repository.get());
         }
 
         public void executeWriteOnRepository(Consumer<ObjectRepository<Element>> operation)
         {
             ObjectRepository<Element> objectRepository = this.repository.get();
-            operation.accept(objectRepository);
-            //            objectRepository.close();
-            this.executeCommitByAutoCommitMode();
+            try
+            {
+                operation.accept(objectRepository);
+            }
+            finally
+            {
+                this.executeCommitByAutoCommitMode();
+            }
         }
 
         public void closeDatabase()
@@ -315,18 +327,6 @@ public class NitriteElementRepository<I extends Comparable<I>, D> implements Ele
                 return this.nitriteMapper.asValue(object);
             }
 
-            @Override
-            public Document parse(String json)
-            {
-                return this.nitriteMapper.parse(json);
-            }
-
-            @Override
-            public String toJson(Object object)
-            {
-                return this.nitriteMapper.toJson(object);
-            }
-
         };
     }
 
@@ -365,7 +365,60 @@ public class NitriteElementRepository<I extends Comparable<I>, D> implements Ele
                        .accept(id);
         this.getRepository()
             .executeWriteOnRepository(repository -> repository.update(Element.of(id, element), true));
+    }
 
+    @SuppressWarnings("unchecked")
+    @Override
+    public void putAll(Map<I, D> map)
+    {
+        if (MapUtils.isNotEmpty(map))
+        {
+            map.keySet()
+               .forEach(id -> this.idSupplier.get()
+                                             .accept(id));
+            this.getRepository()
+                .executeWriteOnRepository(repository ->
+                {
+                    //
+                    Set<I> existingIds = repository.find(ObjectFilters.in("id", map.keySet()
+                                                                                   .toArray()))
+                                                   .toList()
+                                                   .stream()
+                                                   .map(element -> (I) element.getId())
+                                                   .collect(Collectors.toSet());
+
+                    Map<Boolean, List<Entry<I, D>>> existingToEntries = map.entrySet()
+                                                                           .stream()
+                                                                           .collect(Collectors.groupingBy(entry -> existingIds.contains(entry.getKey())));
+
+                    List<Entry<I, D>> nonExistingEntries = existingToEntries.getOrDefault(false, Collections.emptyList());
+                    List<Entry<I, D>> existingEntries = existingToEntries.getOrDefault(true, Collections.emptyList());
+
+                    // insert non existing
+                    try
+                    {
+                        if (!nonExistingEntries.isEmpty())
+                        {
+                            repository.insert(nonExistingEntries.stream()
+                                                                .map(entry -> Element.of(entry.getKey(), entry.getValue()))
+                                                                .toArray(length -> new Element[length]));
+                            this.getRepository()
+                                .getDatabase()
+                                .commit();
+                        }
+                    }
+                    catch (UniqueConstraintException e)
+                    {
+                        nonExistingEntries.forEach(entry -> repository.update(Element.of(entry.getKey(), entry.getValue()), true));
+                    }
+
+                    // update already existing
+                    if (!existingEntries.isEmpty())
+                    {
+                        existingEntries.forEach(entry -> repository.update(Element.of(entry.getKey(), entry.getValue()), true));
+                    }
+                });
+        }
     }
 
     @Override
@@ -380,12 +433,21 @@ public class NitriteElementRepository<I extends Comparable<I>, D> implements Ele
     public NullOptional<D> get(I id)
     {
         return this.getRepository()
-                   .executeReadOnRepositoryAndGet(repository ->
-                   {
-                       return NullOptional.ofNullable(repository.find(ObjectFilters.eq("id", id))
-                                                                .firstOrDefault())
-                                          .mapToNullable(Element::getElement);
-                   });
+                   .executeReadOnRepositoryAndGet(repository -> NullOptional.ofNullable(repository.find(ObjectFilters.eq("id", id))
+                                                                                                  .firstOrDefault())
+                                                                            .mapToNullable(Element::getElement));
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public Map<I, D> getAll(Collection<I> ids)
+    {
+        return this.getRepository()
+                   .executeReadOnRepositoryAndGet(repository -> repository.find(ObjectFilters.in("id", ids.toArray()))
+                                                                          .toList()
+                                                                          .stream()
+                                                                          .collect(Collectors.toMap(element -> (I) element.getId(),
+                                                                                                    element -> (D) element.getElement())));
     }
 
     @Override
