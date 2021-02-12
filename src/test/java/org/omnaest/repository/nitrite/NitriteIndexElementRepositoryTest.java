@@ -177,4 +177,17 @@ public class NitriteIndexElementRepositoryTest
         }
     }
 
+    @Test
+    public void testRemoveWithId() throws IOException
+    {
+        try (NitriteIndexElementRepository<SetDomain> repositoryRoot = new NitriteIndexElementRepository<>(SetDomain.class, FileUtils.createRandomTempFile());
+                IndexElementRepository<SetDomain> repository = repositoryRoot.usingAutoCommit(AutoCommitMode.COMMIT_AFTER_EACH_WRITE_OPERATION)
+                                                                             .clear())
+        {
+            repository.put(100l, new SetDomain("123"));
+            repository.remove(100l);
+            assertEquals(null, repository.getValue(100l));
+        }
+    }
+
 }

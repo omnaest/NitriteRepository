@@ -1,12 +1,15 @@
 package org.omnaest.repository.nitrite;
 
 import java.io.File;
+import java.util.Date;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 import org.omnaest.utils.JSONHelper;
 import org.omnaest.utils.cache.internal.AbstractCache;
+import org.omnaest.utils.duration.TimeDuration;
 import org.omnaest.utils.supplier.SupplierConsumer;
 
 public class NitriteCache extends AbstractCache
@@ -17,12 +20,14 @@ public class NitriteCache extends AbstractCache
     {
         private Object   value;
         private Class<?> type;
+        private Date     modificationDate;
 
         public ElementAndType(Object value, Class<?> type)
         {
             super();
             this.value = value;
             this.type = type;
+            this.modificationDate = new Date();
         }
 
         @SuppressWarnings("unused")
@@ -41,8 +46,14 @@ public class NitriteCache extends AbstractCache
             return this.type;
         }
 
+        public Date getModificationDate()
+        {
+            return this.modificationDate;
+        }
+
     }
 
+    @SuppressWarnings("resource")
     public NitriteCache(File file)
     {
         super();
@@ -60,14 +71,15 @@ public class NitriteCache extends AbstractCache
                 //do nothing
             }
         };
-        this.repository = new NitriteElementRepository<String, ElementAndType>(ElementAndType.class, file, idSupplier);
+        this.repository = new NitriteElementRepository<String, ElementAndType>(ElementAndType.class, file, idSupplier).withIgnoreMappingExceptions();
     }
 
     @Override
     public <V> V get(String key, Class<V> type)
     {
-        ElementAndType elementAndType = this.repository.getValue(key);
-        return elementAndType != null ? JSONHelper.toObjectWithType(elementAndType.getValue(), type) : null;
+        return Optional.ofNullable(this.repository.getValue(key))
+                       .map(elementAndType -> JSONHelper.toObjectWithType(elementAndType.getValue(), type))
+                       .orElse(null);
     }
 
     @SuppressWarnings("unchecked")
@@ -108,6 +120,15 @@ public class NitriteCache extends AbstractCache
     {
         return this.repository.ids()
                               .collect(Collectors.toSet());
+    }
+
+    @Override
+    public TimeDuration getAge(String key)
+    {
+        return Optional.ofNullable(this.repository.getValue(key))
+                       .map(elementAndType -> elementAndType.getModificationDate())
+                       .map(modificationDate -> TimeDuration.between(new Date(), modificationDate))
+                       .orElse(null);
     }
 
 }

@@ -19,6 +19,7 @@ import org.apache.commons.io.FileUtils;
 import org.dizitart.no2.Document;
 import org.dizitart.no2.Nitrite;
 import org.dizitart.no2.NitriteBuilder;
+import org.dizitart.no2.exceptions.ObjectMappingException;
 import org.dizitart.no2.exceptions.UniqueConstraintException;
 import org.dizitart.no2.mapper.JacksonMapper;
 import org.dizitart.no2.mapper.NitriteMapper;
@@ -50,13 +51,14 @@ public class NitriteElementRepository<I extends Comparable<I>, D> implements Ele
 {
     private static final Logger LOG = LoggerFactory.getLogger(NitriteElementRepository.class);
 
-    private CachedElement<DatabaseAndRepository<D>> repository = CachedElement.of(() -> this.createDatabase());
+    private CachedElement<DatabaseAndRepository<D>> repository              = CachedElement.of(() -> this.createDatabase());
     private Class<D>                                dataType;
     private File                                    file;
     private String                                  username;
     private String                                  password;
     protected Supplier<SupplierConsumer<I>>         idSupplier;
     private CommitExecutor<D>                       commitExecutor;
+    private Consumer<Exception>                     mappingExceptionHandler = e -> LOG.error("Unable to serialize/deserialize element instance", e);
 
     private static class CommitExecutor<D>
     {
@@ -260,6 +262,17 @@ public class NitriteElementRepository<I extends Comparable<I>, D> implements Ele
         return this;
     }
 
+    public NitriteElementRepository<I, D> withMappingExceptionHandler(Consumer<Exception> mappingExceptionHandler)
+    {
+        this.mappingExceptionHandler = mappingExceptionHandler;
+        return this;
+    }
+
+    public NitriteElementRepository<I, D> withIgnoreMappingExceptions()
+    {
+        return this.withMappingExceptionHandler(e -> LOG.trace("Unable to serialize/deserialize element instance", e));
+    }
+
     private DatabaseAndRepository<D> createDatabase()
     {
         ExceptionUtils.executeSilentVoid(() -> FileUtils.forceMkdirParent(this.file));
@@ -425,17 +438,27 @@ public class NitriteElementRepository<I extends Comparable<I>, D> implements Ele
     public void remove(I id)
     {
         this.getRepository()
-            .executeWriteOnRepository(repository -> repository.remove(Element.of(id, this.getValue(id))));
-
+            .executeWriteOnRepository(repository -> repository.remove(Element.of(id, null)));
     }
 
     @Override
     public NullOptional<D> get(I id)
     {
         return this.getRepository()
-                   .executeReadOnRepositoryAndGet(repository -> NullOptional.ofNullable(repository.find(ObjectFilters.eq("id", id))
-                                                                                                  .firstOrDefault())
-                                                                            .mapToNullable(Element::getElement));
+                   .executeReadOnRepositoryAndGet(repository ->
+                   {
+                       try
+                       {
+                           return NullOptional.ofNullable(repository.find(ObjectFilters.eq("id", id))
+                                                                    .firstOrDefault())
+                                              .mapToNullable(Element::getElement);
+                       }
+                       catch (ObjectMappingException e)
+                       {
+                           this.mappingExceptionHandler.accept(e);
+                           return NullOptional.empty();
+                       }
+                   });
     }
 
     @Override
@@ -443,11 +466,21 @@ public class NitriteElementRepository<I extends Comparable<I>, D> implements Ele
     public Map<I, D> getAll(Collection<I> ids)
     {
         return this.getRepository()
-                   .executeReadOnRepositoryAndGet(repository -> repository.find(ObjectFilters.in("id", ids.toArray()))
-                                                                          .toList()
-                                                                          .stream()
-                                                                          .collect(Collectors.toMap(element -> (I) element.getId(),
-                                                                                                    element -> (D) element.getElement())));
+                   .executeReadOnRepositoryAndGet(repository ->
+                   {
+                       try
+                       {
+                           return repository.find(ObjectFilters.in("id", ids.toArray()))
+                                            .toList()
+                                            .stream()
+                                            .collect(Collectors.toMap(element -> (I) element.getId(), element -> (D) element.getElement()));
+                       }
+                       catch (ObjectMappingException e)
+                       {
+                           this.mappingExceptionHandler.accept(e);
+                           return Collections.emptyMap();
+                       }
+                   });
     }
 
     @Override
